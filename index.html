@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>דשבורד גיול חובות ובקרת אשראי</title>
+    <!-- SheetJS (XLSX / CSV) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Assistant', sans-serif; }
+        body { background: #ffffff; color: #000; padding: 30px; direction: rtl; text-align: right; }
+        
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #000; padding-bottom: 12px; margin-bottom: 24px; }
+        .header h1 { font-size: 1.6rem; font-weight: 700; }
+        .bsd { font-weight: 700; font-size: 1.1rem; }
+
+        .card { border: 1px solid #000; padding: 20px; border-radius: 4px; margin-bottom: 20px; background: #fff; }
+        .card-title { font-weight: 700; font-size: 1.1rem; border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 14px; }
+
+        input[type="file"] { width: 100%; padding: 10px; border: 1px solid #000; border-radius: 4px; font-size: 0.9rem; margin-bottom: 10px; }
+
+        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px; }
+        .stat-box { border: 1px solid #000; padding: 16px; border-radius: 4px; text-align: center; }
+        .stat-box .num { font-size: 1.8rem; font-weight: 700; margin-top: 4px; }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 0.9rem; }
+        th, td { border: 1px solid #000; padding: 10px; text-align: right; }
+        th { background: #f0f0f0; font-weight: 700; }
+        
+        .badge { padding: 3px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700; }
+        .badge-danger { background: #000; color: #fff; }
+        .badge-warning { border: 1px solid #000; }
+
+        .btn { background: #000; color: #fff; border: none; padding: 6px 12px; font-size: 0.8rem; font-weight: 600; cursor: pointer; border-radius: 3px; }
+        .btn:hover { background: #333; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="bsd">בס"ד</div>
+        <h1>דשבורד גיול חובות ובקרת אשראי</h1>
+        <div></div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">טעינת נתוני גיול מחשבשבת (Excel / CSV)</div>
+        <input type="file" id="dataFile" accept=".xlsx, .xls, .csv">
+        <small style="color:#666;">עמודות מזוהות: שם לקוח, טלפון/נייד, סכום חוב/יתרה, ימי פיגור, אובליגו</small>
+    </div>
+
+    <div class="stats-grid" id="statsArea" style="display:none;">
+        <div class="stat-box">
+            <div>סה"כ חובות פתוחים</div>
+            <div class="num" id="totalDebt">₪0</div>
+        </div>
+        <div class="stat-box">
+            <div>חורגים מאובליגו</div>
+            <div class="num" id="overCreditCount">0</div>
+        </div>
+        <div class="stat-box">
+            <div>חובות בפיגור (60+ יום)</div>
+            <div class="num" id="overdueCount">0</div>
+        </div>
+    </div>
+
+    <div class="card" id="tableCard" style="display:none;">
+        <div class="card-title">פירוט לקוחות ותזכורות לגבייה</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>שם לקוח</th>
+                    <th>סכום חוב</th>
+                    <th>תקרת אובליגו</th>
+                    <th>ימי פיגור</th>
+                    <th>סטאטוס</th>
+                    <th>פעולה מהירה</th>
+                </tr>
+            </thead>
+            <tbody id="debtsTable"></tbody>
+        </table>
+    </div>
+
+    <script>
+        document.getElementById('dataFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                try {
+                    const data = new Uint8Array(evt.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const jsonRows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+                    processData(jsonRows);
+                } catch (err) {
+                    alert('שגיאה בקריאת הקובץ. ודא שהקובץ תקין.');
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        function processData(data) {
+            let totalDebt = 0;
+            let overCreditCount = 0;
+            let overdueCount = 0;
+            let tbodyHtml = '';
+
+            data.forEach(row => {
+                const customer = row['שם לקוח'] || row['לקוח'] || row['שם'] || 'לא ידוע';
+                const debt = parseFloat(row['סכום חוב'] || row['חוב'] || row['יתרה'] || 0);
+                const creditLimit = parseFloat(row['אובליגו'] || row['תקרת אובליגו'] || 0);
+                const overdueDays = parseInt(row['ימי פיגור'] || row['פיגור'] || 0);
+                const phone = row['טלפון'] || row['נייד'] || row['סלולרי'] || '';
+
+                totalDebt += debt;
+                const isOverCredit = creditLimit > 0 && debt > creditLimit;
+                const isOverdue = overdueDays >= 60;
+
+                if (isOverCredit) overCreditCount++;
+                if (isOverdue) overdueCount++;
+
+                let statusBadge = '';
+                if (isOverCredit) statusBadge += '<span class="badge badge-danger">חריגת אובליגו</span> ';
+                if (isOverdue) statusBadge += '<span class="badge badge-warning">פיגור עמוק</span>';
+                if (!statusBadge) statusBadge = 'תקין';
+
+                tbodyHtml += `<tr>
+                    <td><strong>${customer}</strong></td>
+                    <td>₪${debt.toLocaleString()}</td>
+                    <td>${creditLimit ? '₪' + creditLimit.toLocaleString() : 'לא הוגדר'}</td>
+                    <td>${overdueDays} ימים</td>
+                    <td>${statusBadge}</td>
+                    <td>
+                        ${phone ? `<button class="btn" onclick="sendReminder('${phone}', '${customer}', ${debt})">שלח תזכורת WhatsApp</button>` : 'אין טלפון'}
+                    </td>
+                </tr>`;
+            });
+
+            document.getElementById('totalDebt').textContent = `₪${totalDebt.toLocaleString()}`;
+            document.getElementById('overCreditCount').textContent = overCreditCount;
+            document.getElementById('overdueCount').textContent = overdueCount;
+            document.getElementById('debtsTable').innerHTML = tbodyHtml;
+
+            document.getElementById('statsArea').style.display = 'grid';
+            document.getElementById('tableCard').style.display = 'block';
+        }
+
+        function sendReminder(phone, customer, debt) {
+            const msg = encodeURIComponent(`שלום ${customer},\nתזכורת ידידותית: במערכת מופיעה יתרת חוב פתוחה על סך ₪${debt.toLocaleString()}.\nנשמח לאישור והסדרת התשלום.`);
+            window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
+        }
+    </script>
+</body>
+</html>
